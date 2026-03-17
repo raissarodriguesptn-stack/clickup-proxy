@@ -1,0 +1,7 @@
+{
+  "name": "clickup-proxy",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}
