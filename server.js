@@ -3,37 +3,35 @@ const https = require('https');
 
 const PORT = process.env.PORT || 3000;
 
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': '*',
-  'Access-Control-Max-Age': '86400'
-};
+function setCORS(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', '*');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Expose-Headers', '*');
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
 
 const server = http.createServer((req, res) => {
-  // Aplica CORS em TODAS as respostas
-  Object.entries(CORS_HEADERS).forEach(([k, v]) => res.setHeader(k, v));
+  setCORS(res);
 
-  // Preflight OPTIONS — responde imediatamente
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
     return;
   }
 
+  const url = new URL(req.url, 'http://localhost');
+
   // Health check
-  if (req.url === '/' || req.url === '/health') {
+  if (url.pathname === '/' || url.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ status: 'ok', service: 'clickup-proxy' }));
+    res.end(JSON.stringify({ status: 'ok', version: '3' }));
     return;
   }
 
-  // Aceita: /proxy?token=xxx&path=/team/...
-  const url = new URL(req.url, 'http://localhost');
-
   if (!url.pathname.startsWith('/proxy')) {
     res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Rota não encontrada. Use /proxy?token=...&path=...' }));
+    res.end(JSON.stringify({ error: 'Use /proxy?token=...&path=...' }));
     return;
   }
 
@@ -46,17 +44,15 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Monta a query string original (sem token e path)
-  const extra = [];
+  // Reconstrói querystring do ClickUp (parâmetros extras além de token e path)
+  const qs = [];
   url.searchParams.forEach((v, k) => {
-    if (k !== 'token' && k !== 'path') extra.push(k + '=' + encodeURIComponent(v));
+    if (k !== 'token' && k !== 'path') qs.push(k + '=' + encodeURIComponent(v));
   });
 
-  // Reconstrói o path completo incluindo query strings do ClickUp
-  let clickupPath = '/api/v2' + path;
-  if (extra.length) clickupPath += (path.includes('?') ? '&' : '?') + extra.join('&');
+  const clickupPath = '/api/v2' + path + (qs.length ? (path.includes('?') ? '&' : '?') + qs.join('&') : '');
 
-  console.log('Proxying:', clickupPath);
+  console.log(`[${new Date().toISOString()}] GET ${clickupPath}`);
 
   const options = {
     hostname: 'api.clickup.com',
@@ -72,13 +68,15 @@ const server = http.createServer((req, res) => {
     let body = '';
     proxyRes.on('data', chunk => body += chunk);
     proxyRes.on('end', () => {
+      setCORS(res); // garante CORS mesmo na resposta proxied
       res.writeHead(proxyRes.statusCode, { 'Content-Type': 'application/json' });
       res.end(body);
     });
   });
 
   proxyReq.on('error', (e) => {
-    console.error('Proxy request error:', e.message);
+    console.error('Proxy error:', e.message);
+    setCORS(res);
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: e.message }));
   });
@@ -86,6 +84,6 @@ const server = http.createServer((req, res) => {
   proxyReq.end();
 });
 
-server.listen(PORT, () => {
-  console.log('✅ Proxy ClickUp rodando na porta', PORT);
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ ClickUp proxy v3 na porta ${PORT}`);
 });
